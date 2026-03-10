@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Speech & Sentiment Analyzer</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+    <div class="glass-panel">
+        <header>
+            <div class="logo">
+                <i class="fa-solid fa-microphone-lines"></i>
+            </div>
+            <h1>Speech Analyzer</h1>
+            <p>Convert audio to text & analyze sentiment</p>
+        </header>
+
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('upload', event)">
+                <i class="fa-solid fa-cloud-arrow-up"></i> Upload File
+            </button>
+            <button class="tab-btn" onclick="switchTab('live', event)">
+                <i class="fa-solid fa-podcast"></i> Live Speech
+            </button>
+        </div>
+
+        <div id="upload-tab" class="tab-content active">
+            <form action="/analyze" method="post" enctype="multipart/form-data" class="upload-form">
+                <div class="file-upload-wrapper">
+                    <input type="file" name="audio" id="audio" accept="audio/*" required class="file-input">
+                    <label for="audio" class="file-label">
+                        <i class="fa-solid fa-file-audio"></i>
+                        <span id="file-name">Choose an audio file...</span>
+                    </label>
+                </div>
+                <button type="submit" class="action-btn primary-btn" id="upload-btn">
+                    <i class="fa-solid fa-magnifying-glass-chart"></i> Analyze Upload
+                </button>
+            </form>
+
+            {% if transcription %}
+            <div class="result-card fade-in">
+                <div class="result-section">
+                    <h3><i class="fa-solid fa-align-left"></i> Transcription</h3>
+                    <p class="transcript-text">{{ transcription }}</p>
+                </div>
+                <div class="result-section">
+                    <h3><i class="fa-solid fa-face-smile"></i> Sentiment</h3>
+                    <div class="sentiment-badge {{ sentiment | lower }}">
+                        {{ sentiment }} <span class="score">({{ "%.2f"|format(score * 100) }}%)</span>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <div id="live-tab" class="tab-content" style="display: none;">
+            <div class="live-controls">
+                <button id="start-record-btn" class="action-btn success-btn">
+                    <i class="fa-solid fa-microphone"></i> Start Recording
+                </button>
+                <button id="stop-record-btn" class="action-btn danger-btn" disabled>
+                    <i class="fa-solid fa-circle-stop"></i> Stop Recording
+                </button>
+            </div>
+
+            <div class="recording-status" id="recording-status">
+                <span class="pulse-dot"></span> Listening...
+            </div>
+
+            <div class="result-card" id="live-result" style="display: none;">
+                <div class="result-section">
+                    <h3><i class="fa-solid fa-align-left"></i> Live Transcription</h3>
+                    <p class="transcript-text" id="live-transcript"></p>
+                </div>
+                <div class="result-section" id="live-sentiment-section" style="display: none;">
+                    <h3><i class="fa-solid fa-face-smile"></i> Sentiment</h3>
+                    <div id="live-sentiment-badge" class="sentiment-badge"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // File input label update
+        document.getElementById('audio')?.addEventListener('change', function (e) {
+            const fileName = e.target.files[0]?.name || "Choose an audio file...";
+            document.getElementById('file-name').textContent = fileName;
+        });
+
+        // Add loading state to upload button
+        document.querySelector('.upload-form')?.addEventListener('submit', function () {
+            const btn = document.getElementById('upload-btn');
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analyzing...';
+            btn.style.opacity = '0.7';
+            btn.style.cursor = 'not-allowed';
+        });
+
+        // Tab Switching Logic
+        function switchTab(tabId, ev) {
+            // Hide all contents
+            document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+            // Remove active class from buttons
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+            // Show selected
+            document.getElementById(tabId + '-tab').style.display = 'block';
+
+            if (ev && ev.currentTarget) {
+                ev.currentTarget.classList.add('active');
+            } else {
+                document.querySelectorAll('.tab-btn').forEach(el => {
+                    if (el.getAttribute('onclick').includes(tabId)) {
+                        el.classList.add('active');
+                    }
+                });
+            }
+        }
+
+        // Live Speech Logic
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        if (SpeechRecognition) {
+            const recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+
+            const startBtn = document.getElementById('start-record-btn');
+            const stopBtn = document.getElementById('stop-record-btn');
+            const statusEl = document.getElementById('recording-status');
+            const resultCard = document.getElementById('live-result');
+            const transcriptEl = document.getElementById('live-transcript');
+            const sentimentSection = document.getElementById('live-sentiment-section');
+            const sentimentBadge = document.getElementById('live-sentiment-badge');
+
+            let finalTranscript = '';
+
+            startBtn.addEventListener('click', () => {
+                finalTranscript = '';
+                transcriptEl.innerHTML = '';
+                sentimentSection.style.display = 'none';
+
+                recognition.start();
+
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                statusEl.classList.add('active');
+                resultCard.style.display = 'block';
+            });
+
+            stopBtn.addEventListener('click', () => {
+                recognition.stop();
+
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                statusEl.classList.remove('active');
+            });
+
+            // Dictionary for Auto-Correcting specific terms
+            const corrections = {
+                "btec": "BTech",
+                "b. tech": "BTech",
+                "benhoor": "Ben Hur",
+                "ben hoor": "Ben Hur",
+                "b tech": "BTech"
+            };
+
+            function applyCorrections(text) {
+                let correctedText = text.toLowerCase();
+                for (const [wrong, right] of Object.entries(corrections)) {
+                    correctedText = correctedText.split(wrong).join(right);
+                }
+
+                // Capitalize first letter of sentences
+                return correctedText.replace(/(^\w|\.\s+\w)/gm, letter => letter.toUpperCase());
+            }
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let newFinalText = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        newFinalText += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+
+                if (newFinalText) {
+                    finalTranscript += applyCorrections(newFinalText);
+                }
+
+                // Display transcript (final + interim in lighter color)
+                transcriptEl.innerHTML = finalTranscript + '<span style="color: #888;">' + applyCorrections(interimTranscript) + '</span>';
+            };
+
+            // Analyze sentiment when recognition naturally ends
+            recognition.onend = () => {
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                statusEl.classList.remove('active');
+
+                if (finalTranscript.trim() !== '') {
+                    analyzeText(finalTranscript);
+                }
+            };
+
+            recognition.onerror = (event) => {
+                console.error("Speech recognition error", event.error);
+                statusEl.classList.remove('active');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                transcriptEl.innerHTML += "<br><span style='color:#ef4444;'>Error: " + event.error + "</span>";
+            };
+
+            // Function to send text to backend for sentiment analysis
+            async function analyzeText(text) {
+                sentimentSection.style.display = 'block';
+                sentimentBadge.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analyzing...';
+                sentimentBadge.className = 'sentiment-badge analyzing';
+
+                try {
+                    const response = await fetch('/analyze_text', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ text: text })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.error) {
+                        sentimentBadge.innerHTML = 'Error';
+                        sentimentBadge.className = 'sentiment-badge negative';
+                    } else {
+                        const scorePct = (data.score * 100).toFixed(2);
+                        sentimentBadge.innerHTML = `${data.sentiment} <span class="score">(${scorePct}%)</span>`;
+                        sentimentBadge.className = `sentiment-badge ${data.sentiment.toLowerCase()}`;
+                    }
+                } catch (error) {
+                    console.error("Error analyzing text:", error);
+                    sentimentBadge.innerHTML = 'Analysis Failed';
+                    sentimentBadge.className = 'sentiment-badge negative';
+                }
+            }
+
+        } else {
+            // Browser doesn't support Speech API
+            document.getElementById('live-tab').innerHTML = '<div class="result-card"><p style="color:#ef4444"><i class="fa-solid fa-triangle-exclamation"></i> Speech Recognition API is not supported in this browser. Please try Chrome, Edge, or Safari.</p></div>';
+        }
+    </script>
+</body>
+
+</html>
